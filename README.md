@@ -1,68 +1,104 @@
 # AMD Neural-Grid Prototype
 
-A complete working prototype of “AMD Neural-Grid” demonstrating a decentralized AI network with multiple nodes, fault tolerance, reputation tracking, crypto rewards, and encrypted computation. 
+A complete working prototype of "AMD Neural-Grid" demonstrating a decentralized AI network with multiple nodes, fault tolerance, reputation tracking, crypto rewards, and encrypted computation. 
 
-This system runs completely locally on a single machine using CPU inference and the `distilgpt2` model to ensure it runs comfortably within 16GB RAM.
+This system runs locally using CPU inference and the `distilgpt2` model (16GB RAM safe). It supports both **single-laptop demo mode** (multiple processes) and **real two-laptop distributed mode** (Wi-Fi WebSocket).
 
 ## The 5 Core USPs Demonstrated
 
 1. **Decentralized AI Inference (True Layer Splitting)**
-   The `distilgpt2` model is logically split across 3 simulated edge nodes. 
-   - **Node 1**: Embedding + Transformer Layers 0-1
-   - **Node 2**: Transformer Layers 2-3
-   - **Node 3**: Transformer Layers 4-5 + LM Head & Decoding
-   Nodes pass intermediate hidden states back and forth via WebSockets.
+   The `distilgpt2` model is logically split across 3 edge nodes. 
+   - **Node A**: Embedding + Transformer Layers 0-1
+   - **Node B**: Transformer Layers 2-3
+   - **Node C**: Transformer Layers 4-5 + LM Head & Decoding
+   Nodes pass intermediate hidden states via encrypted WebSockets.
 
 2. **Purposeful Compute**
-   Instead of hashing random numbers, the network tracks the actual compute time (in seconds) that each node spends processing tensors. This "productive" time is logged in the DB and displayed on the dashboard.
+   The network tracks actual compute time (in seconds) per node. This "productive" time is logged in the DB and shown on the dashboard — no wasted hash cycles.
 
 3. **Self-Healing Fault Tolerance**
-   The Controller maintains a heartbeat with every node. If a node process is killed mid-generation (simulating a crash), the Controller detects the timeout, seamlessly retrieves the last successful cached hidden state, and re-routes the exact failed stage to another node without losing the generation loop.
+   Click the **Kill Node** button mid-generation to simulate a crash. The Controller instantly detects the disconnect, retrieves the cached hidden state, and re-routes the failed stage to another live node. Generation continues from the exact token it left off — no restart.
 
 4. **Performance-Based Crypto Rewards**
-   Nodes earn simulated tokens based on the formula: `(Compute Time * 0.4) + (Tokens * 0.2) + (Uptime * 0.2)`. At the end of every 20-token inference session, a final `LedgerBlock` is created, hashing the summary transaction using SHA256 to simulate an immutable blockchain.
+   Nodes earn tokens: `(Compute * 0.5) + (Tokens * 0.3) + (Uptime * 0.2)`. After every 20-token session, a `LedgerBlock` is committed with SHA256 hash chaining to simulate an immutable blockchain.
 
 5. **Privacy-First Encrypted Processing**
-   Zero-Trust design. Every payload sent between the Controller and the Nodes (including the hidden states) is symmetrically encrypted using `AES-GCM` with a random nonce. The dashboard displays a live preview of this encrypted ciphertext traversing the network.
+   Every payload between Controller and Nodes is encrypted with `AES-GCM` + random nonce. The dashboard displays live encrypted ciphertext and auth tag verification.
 
-## Quick Start (Hackathon Ready)
+## Quick Start
 
-**1. Install Dependencies**
-Ensure you are using Python 3.9+ and run:
+### Option A: Single-Laptop Demo (Video Recording)
 ```bash
-pip install -r requirements.txt
+python -m venv venv
+.\venv\Scripts\pip install -r requirements.txt   # Windows
+python run_demo.py
 ```
+This boots the Controller + 3 worker nodes automatically. Open `frontend/index.html` in your browser.
 
-**2. Launch the Swarm**
-Start the Controller and all 3 worker nodes simultaneously:
+### Option B: Two-Laptop Distributed Mode
+**Laptop 1 (Controller):**
 ```bash
 python run_demo.py
 ```
-*(The first run will take a moment to download the `distilgpt2` model from HuggingFace to your local cache).*
+It prints your local IPv4 and the WebSocket URL.
 
-**3. Open the Dashboard**
-Simply open `frontend/index.html` in any modern web browser.
+**Laptop 2 (Workers):**
+Edit `CONTROLLER_WS_URL` in `nodes/worker.py` to `ws://<LAPTOP1_IP>:8000/ws`, then:
+```bash
+python nodes/worker.py Node-A
+python nodes/worker.py Node-B
+python nodes/worker.py Node-C
+```
 
 ## Using the Dashboard
 
-1. **Start Inference**: Click "Generate (20 Tokens)". Watch the tokens stream in while the topology grid highlights exactly which Node is processing which Stage.
-2. **View Encryption**: The right-hand panel shows the AES-GCM Nonce changing per request, proving that the raw hidden states are never sent in plaintext.
-3. **Simulate a Crash**: Mid-generation, click the red **Kill Node** button or manually kill one of the Python worker processes in your terminal. Watch the system reroute the task and recover automatically. 
-4. **Rewards & Ledger**: View the real-time node balances increasing in the Leaderboard. After the 20th token, the final SHA256 Ledger Block Hash will be securely committed to the SQLite database.
+1. **Start Inference**: Click "Generate (20 Tokens)". Watch tokens stream while the stage grid highlights which Node processes which Stage.
+2. **View Encryption**: The panel shows the AES-GCM Nonce changing per request, proving hidden states are never sent in plaintext.
+3. **Simulate a Crash**: Click the red **Kill Node** button mid-generation. Watch the node turn red, the overlay announce reassignment, and generation continue on a new node.
+4. **Rewards & Ledger**: View real-time node balances increasing. After the 20th token, the SHA256 Ledger Block Hash is committed.
 
-## Architecture Diagram
-```ascii
+## Console Output (Demo Video Reference)
+```
+AMD Neural-Grid Demo Mode Active
+All 5 USPs Ready for Demonstration
+
+Controller Started
+Node-A Started
+Node-B Started
+Node-C Started
+✅ [Swarm] Node Connected: Node-A
+✅ [Swarm] Node Connected: Node-B
+✅ [Swarm] Node Connected: Node-C
+
+[Node-A] Executing Stage 1
+🔐 Payload Encrypted | Nonce: ... | Preview: ...
+🔐 Auth Tag Verified successfully.
+[Node-A] Compute Time: 0.045 seconds
+
+Kill Command Received for Node-A
+❌ Node-A Disconnected
+Stage Reassigned Due to Node Failure
+Resuming from Cached Hidden State
+Reassigning Stage 2 from Node-A to Node-B
+
+Ledger Block Created
+Previous Hash: 0000000000000000...
+Current Hash: e51278991587feb2...
+```
+
+## Architecture
+```
     [User Prompt] 
           |
     (AES-GCM Encrypted)
           v
     [Controller] --- (Heartbeat 2s / 5s Timeout)
           |
-          +---> [Node A] (Stage 1: Embed + L0-1)
+          +--> [Node A] (Stage 1: Embed + L0-1)
           |
-          +---> [Node B] (Stage 2: L2-3)
+          +--> [Node B] (Stage 2: L2-3)
           |
-          +---> [Node C] (Stage 3: L4-5 + Head)
+          +--> [Node C] (Stage 3: L4-5 + Head)
 ```
 
 ## Built With

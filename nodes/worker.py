@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-CONTROLLER_WS_URL = "ws://localhost:8000/ws/node"
+CONTROLLER_WS_URL = "ws://127.0.0.1:8000/ws"
 
 class NeuralNode:
     def __init__(self, node_id: str):
@@ -27,7 +27,7 @@ class NeuralNode:
     async def connect(self):
         self.running = True
         try:
-            async with websockets.connect(f"{CONTROLLER_WS_URL}/{self.node_id}") as websocket:
+            async with websockets.connect(CONTROLLER_WS_URL) as websocket:
                 self.websocket = websocket
                 logger.info(f"Node {self.node_id} connected to Swarm Controller.")
                 
@@ -62,6 +62,11 @@ class NeuralNode:
             async for message in self.websocket:
                 data = json.loads(message)
                 
+                if data.get("type") == "kill":
+                    print("Worker Process Terminated")
+                    import os
+                    os._exit(1)
+                
                 if data.get("type") == "task":
                     # USP 5: Privacy-First Encrypted Processing
                     # Decrypt the payload
@@ -77,7 +82,7 @@ class NeuralNode:
                     hidden_states_list = task_data.get("hidden_states")
                     task_id = task_data.get("task_id")
                     
-                    logger.info(f"Received Task {task_id} -> Executing Stage {stage}")
+                    print(f"[{self.node_id}] Executing Stage {stage}")
                     
                     # Execute assigned stage (USP 1)
                     result = {}
@@ -97,6 +102,9 @@ class NeuralNode:
                         result["stage"] = stage
                         result["node_id"] = self.node_id
                         result["status"] = "success"
+                        
+                        if "compute_time" in result:
+                            print(f"[{self.node_id}] Compute Time: {result['compute_time']:.3f} seconds")
                         
                     except Exception as e:
                         logger.error(f"Error executing stage {stage}: {e}")
@@ -118,7 +126,7 @@ class NeuralNode:
                     }
                     
                     await self.websocket.send(json.dumps(response_msg))
-                    logger.info(f"Completed Task {task_id} -> Result Sent (Encrypted)")
+                    # logger.info(f"Completed Task {task_id} -> Result Sent (Encrypted)")
 
         except websockets.ConnectionClosed:
             logger.info("Connection closed by server.")

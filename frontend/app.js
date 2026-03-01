@@ -66,8 +66,17 @@ function handleSocketEvent(data) {
         cryptoNonce.innerText = data.nonce_preview;
         cryptoPayload.innerText = data.encrypted_preview;
         
-        // Highlight active node
-        document.getElementById(`card-${data.node}`)?.classList.add('anim-processing', 'stage-active');
+        const card = document.getElementById(`card-${data.node}`);
+        if (card) {
+            card.classList.add('anim-processing', 'stage-active');
+            
+            // Reassignment UI indication
+            if (nodeData[data.node] && nodeData[data.node].flashGreen) {
+                nodeData[data.node].flashGreen = false;
+                card.classList.add('bg-green-900/80', 'border-green-400');
+                setTimeout(() => card.classList.remove('bg-green-900/80', 'border-green-400'), 1000);
+            }
+        }
     }
     else if (data.event === "stage_complete") {
         document.getElementById(`card-${data.node}`)?.classList.remove('anim-processing', 'stage-active');
@@ -81,6 +90,10 @@ function handleSocketEvent(data) {
     }
     else if (data.event === "reroute_start") {
         console.warn(`Rerouting stage ${data.stage} after node failure (USP 3)`);
+        showTemporaryOverlay('✓ Stage Successfully Reassigned', false);
+        
+        // Let the next assigned node flash green
+        Object.keys(nodeData).forEach(id => nodeData[id].flashGreen = true);
     }
     else if (data.event === "session_complete") {
         isGenerating = false;
@@ -127,8 +140,8 @@ function renderNodes() {
                     <h3 class="font-bold text-slate-200">${id} ${badges}</h3>
                     <div class="w-2 h-2 rounded-full bg-${color}-500 ${info.status==='Active' ? 'animate-pulse' : ''}"></div>
                 </div>
-                <div class="text-sm mt-2 text-${color}-400 font-medium">
-                    <i class="fa-solid fa-${info.status==='Active'?'server':(info.status==='Offline'?'power-off':'skull')} mr-1"></i> ${info.status}
+                <div class="text-sm mt-2 text-${color}-400 font-medium ${info.status==='Failed' ? 'animate-pulse font-bold' : ''}">
+                    <i class="fa-solid fa-${info.status==='Active'?'server':(info.status==='Offline'?'power-off':'skull')} mr-1"></i> ${info.status==='Failed' ? 'FAILED' : info.status}
                 </div>
                 <div class="text-xs text-slate-500 mt-2">Local CPU Instance</div>
             </div>
@@ -142,6 +155,17 @@ function updateNodeCard(id, status) {
         nodeData[id].status = status;
         renderNodes();
     }
+}
+
+function showTemporaryOverlay(msg, isError) {
+    const el = document.createElement('div');
+    el.className = `fixed top-10 left-1/2 transform -translate-x-1/2 p-4 rounded-lg font-bold text-white shadow-2xl transition-opacity duration-500 z-50 flex items-center gap-2 ${isError ? 'bg-red-600/90 border border-red-500' : 'bg-green-600/90 border border-green-500'}`;
+    el.innerHTML = isError ? `<i class="fa-solid fa-triangle-exclamation"></i> ${msg}` : `<i class="fa-solid fa-check"></i> ${msg}`;
+    document.body.appendChild(el);
+    setTimeout(() => { 
+        el.style.opacity = '0'; 
+        setTimeout(() => el.remove(), 500); 
+    }, 2500);
 }
 
 async function fetchMetrics() {
@@ -201,6 +225,7 @@ generateBtn.addEventListener('click', async () => {
     outputText.innerText = prompt; // Start with the prompt
     
     failuresHandled = 0;
+    Object.keys(nodeData).forEach(id => nodeData[id].isKilled = false);
     
     try {
         await fetch(`${API_BASE}/generate`, {
@@ -215,6 +240,37 @@ generateBtn.addEventListener('click', async () => {
         generateBtn.innerText = "Generate (20 Tokens)";
     }
 });
+
+const demoKillBtn = document.getElementById('demo-kill-btn');
+if (demoKillBtn) {
+    demoKillBtn.addEventListener('click', async () => {
+        if (!isGenerating) return;
+        try {
+            const res = await fetch(`${API_BASE}/kill-node`, { method: 'POST' });
+            const data = await res.json();
+            
+            if (data.status === "success") {
+                const nodeId = data.killed_node;
+                
+                // Overlay message
+                showTemporaryOverlay(`Node ${nodeId} Failed — Reassigning Stage...`, true);
+                
+                // Append system output
+                outputText.innerText += `\n[System] Stage Reassigned from ${nodeId}\n`;
+                outputText.parentElement.scrollTop = outputText.parentElement.scrollHeight;
+                
+                // Force an immediate visual blink without waiting for websocket
+                const card = document.getElementById(`card-${nodeId}`);
+                if (card) {
+                    card.classList.remove('border-slate-700', 'anim-processing', 'stage-active');
+                    card.classList.add('border-red-500', 'animate-pulse', 'bg-red-900/20');
+                }
+            }
+        } catch(e) {
+            console.error(e);
+        }
+    });
+}
 
 // Setup
 renderNodes();

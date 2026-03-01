@@ -36,6 +36,11 @@ def create_ledger_block(reward_summary_dict: dict):
         )
         db.add(new_block)
         db.commit()
+        
+        print("\nLedger Block Created")
+        print(f"Previous Hash: {prev_hash}")
+        print(f"Current Hash: {curr_hash}\n")
+        
         return curr_hash
     finally:
         db.close()

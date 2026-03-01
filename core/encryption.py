@@ -16,6 +16,8 @@ def encrypt_payload(payload_dict: dict) -> str:
     data = json.dumps(payload_dict).encode('utf-8')
     ct = aesgcm.encrypt(nonce, data, None)
     
+    print(f"🔐 Payload Encrypted | Nonce: {nonce.hex()} | Preview: {ct[:16].hex()}...")
+    
     # Prepend nonce to ciphertext and base64 encode
     encrypted_blob = nonce + ct
     return base64.b64encode(encrypted_blob).decode('utf-8')
@@ -29,4 +31,6 @@ def decrypt_payload(encrypted_str: str) -> dict:
     ct = encrypted_blob[12:]
     
     data = aesgcm.decrypt(nonce, ct, None)
+    print("🔐 Auth Tag Verified successfully.")
+    
     return json.loads(data.decode('utf-8'))

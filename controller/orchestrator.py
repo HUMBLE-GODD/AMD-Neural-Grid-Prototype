@@ -9,6 +9,7 @@ from fastapi import WebSocket
 from core.encryption import encrypt_payload, decrypt_payload
 from core.rewards import distribute_reward
 from core.ledger import create_ledger_block
+from core.db import SessionLocal, NodeMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +65,36 @@ class SwarmOrchestrator:
         self.active_nodes[node_id] = NodeConnection(node_id, ws)
         logger.info(f"Node Registered: {node_id}")
         self.node_participations[node_id] = 0
+        
+        # Ensure a DB row exists so rewards can be written
+        db = SessionLocal()
+        try:
+            existing = db.query(NodeMetrics).filter(NodeMetrics.node_id == node_id).first()
+            if not existing:
+                db.add(NodeMetrics(node_id=node_id, status="Active"))
+                db.commit()
+        finally:
+            db.close()
 
     def unregister_node(self, node_id: str):
         if node_id in self.active_nodes:
-            self.active_nodes[node_id].status = "Failed"
+            del self.active_nodes[node_id]
             logger.warning(f"Node Unregistered/Failed: {node_id}")
+
+    async def handle_node_disconnect(self, node_id: str):
+        """Called when a node WebSocket disconnects. Handles cleanup AND reassignment."""
+        self.unregister_node(node_id)
+        
+        await self.broadcast_frontend({
+            "event": "node_failed",
+            "node_id": node_id
+        })
+        
+        # If the disconnected node was the one actively processing a stage, reassign
+        if self.is_generating and self.cached_state.get("assigned_node") == node_id:
+            print("Stage Reassigned Due to Node Failure")
+            print("Resuming from Cached Hidden State")
+            await self.resume_from_cache()
 
     def update_heartbeat(self, node_id: str):
         if node_id in self.active_nodes:
@@ -79,22 +105,12 @@ class SwarmOrchestrator:
         """Watcher loop checking for node timeouts (5s)"""
         while True:
             await asyncio.sleep(1)
-            dead_nodes = []
-            for node_id, conn in self.active_nodes.items():
+            # Use a snapshot to avoid dict-mutation errors
+            snapshot = dict(self.active_nodes)
+            for node_id, conn in snapshot.items():
                 if not conn.is_alive() and conn.status == "Active":
                     logger.warning(f"Timeout detected for {node_id}")
-                    conn.status = "Failed"
-                    dead_nodes.append(node_id)
-                    
-                    await self.broadcast_frontend({
-                        "event": "node_failed",
-                        "node_id": node_id
-                    })
-                    
-            # Fault Tolerance Recovery (USP 3)
-            if self.is_generating and self.cached_state["assigned_node"] in dead_nodes:
-                logger.warning(f"Active node {self.cached_state['assigned_node']} died mid-generation. Resuming from cache...")
-                await self.resume_from_cache()
+                    await self.handle_node_disconnect(node_id)
 
     def get_available_node(self, exclude_node: str = None) -> str:
         """Simple round-robin or first available load balancer"""
@@ -129,6 +145,7 @@ class SwarmOrchestrator:
             # Assume it failed while cycling back to stage 1 for the next token
             failed_stage = 1
             
+        print("Resuming from Cached Hidden State")
         logger.info(f"Resuming Stage {failed_stage} from cache")
         await self.broadcast_frontend({"event": "reroute_start", "stage": failed_stage})
         
@@ -141,12 +158,16 @@ class SwarmOrchestrator:
         if not self.is_generating:
             return
             
-        target_node = self.get_available_node()
+        target_node = self.get_available_node(exclude_node=self.cached_state["assigned_node"])
         if not target_node:
             logger.error("No active nodes available! Halting generation.")
             self.is_generating = False
             await self.broadcast_frontend({"event": "generation_halted", "reason": "No active nodes"})
             return
+            
+        # If this is a reassignment, print the requested explicit log
+        if self.cached_state["assigned_node"] and self.cached_state["assigned_node"] != target_node:
+            print(f"Reassigning Stage {stage} from {self.cached_state['assigned_node']} to {target_node}")
             
         task_id = str(uuid.uuid4())[:8]
         self.cached_state["assigned_node"] = target_node
@@ -170,6 +191,13 @@ class SwarmOrchestrator:
             "encrypted_preview": encrypted_payload[16:64] + "..."
         })
         
+        # Re-verify node is active right before sending (safety check)
+        if target_node not in self.active_nodes or self.active_nodes[target_node].status != "Active":
+            logger.warning(f"Target node {target_node} failed just before routing. Reassigning...")
+            self.unregister_node(target_node)
+            await self.resume_from_cache()
+            return
+            
         # Send to Worker
         try:
             ws = self.active_nodes[target_node].websocket

@@ -43,16 +43,10 @@ async def frontend_ws(websocket: WebSocket):
         orchestrator.frontend_ws = None
         logger.info("Frontend disconnected")
 
-@app.websocket("/ws/node/{node_id}")
-async def node_ws(websocket: WebSocket, node_id: str):
+@app.websocket("/ws")
+async def node_ws(websocket: WebSocket):
     await websocket.accept()
-    orchestrator.register_node(node_id, websocket)
-    
-    # Send initial connections update to frontend
-    await orchestrator.broadcast_frontend({
-        "event": "system_status",
-        "nodes": list(orchestrator.active_nodes.keys())
-    })
+    node_id = None
     
     try:
         while True:
@@ -60,17 +54,25 @@ async def node_ws(websocket: WebSocket, node_id: str):
             msg = json.loads(data)
             
             if msg.get("type") == "heartbeat":
+                if not node_id:
+                    node_id = msg.get("node_id", "Unknown-Node")
+                    orchestrator.register_node(node_id, websocket)
+                    print(f"✅ [Swarm] Node Connected: {node_id}")
+                    # Send initial connections update to frontend
+                    await orchestrator.broadcast_frontend({
+                        "event": "system_status",
+                        "nodes": list(orchestrator.active_nodes.keys())
+                    })
                 orchestrator.update_heartbeat(node_id)
             elif msg.get("type") == "task_result":
-                # Handle async result execution
-                asyncio.create_task(orchestrator.handle_task_result(node_id, msg.get("payload")))
+                if node_id:
+                    # Handle async result execution
+                    asyncio.create_task(orchestrator.handle_task_result(node_id, msg.get("payload")))
                 
     except WebSocketDisconnect:
-        orchestrator.unregister_node(node_id)
-        await orchestrator.broadcast_frontend({
-            "event": "node_failed",
-            "node_id": node_id
-        })
+        if node_id:
+            print(f"❌ {node_id} Disconnected")
+            await orchestrator.handle_node_disconnect(node_id)
 
 # --- REST APIs for Frontend ---
 
@@ -85,6 +87,30 @@ async def start_generation(req: PromptRequest):
     # Start generation in background
     asyncio.create_task(orchestrator.start_generation(req.prompt))
     return {"status": "started", "prompt": req.prompt}
+
+@app.post("/api/kill-node")
+async def kill_node():
+    if not orchestrator.is_generating:
+        return {"status": "error", "message": "Not currently generating"}
+        
+    target_node = orchestrator.cached_state.get("assigned_node")
+    if not target_node:
+        return {"status": "error", "message": "No node assigned"}
+        
+    print(f"Kill Command Received for {target_node}")
+    
+    if target_node in orchestrator.active_nodes:
+        # Force-close the WebSocket from server side to trigger disconnect
+        try:
+            ws = orchestrator.active_nodes[target_node].websocket
+            await ws.close()
+        except Exception:
+            pass
+        # Immediately handle disconnect + reassignment without waiting
+        print(f"❌ {target_node} Disconnected")
+        await orchestrator.handle_node_disconnect(target_node)
+            
+    return {"status": "success", "killed_node": target_node}
 
 @app.get("/api/metrics")
 def get_metrics():
