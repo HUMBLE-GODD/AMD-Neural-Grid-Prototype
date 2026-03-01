@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AMD Neural-Grid Prototype</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: 'Inter', sans-serif; }
+        .node-card { transition: all 0.3s ease; }
+        .stage-active { border-color: #3b82f6; box-shadow: 0 0 15px rgba(59, 130, 246, 0.5); }
+        /* Pulse animation for active generating nodes */
+        @keyframes pulse-border {
+            0% { border-color: #1e293b; }
+            50% { border-color: #3b82f6; box-shadow: 0 0 10px rgba(59, 130, 246, 0.3); }
+            100% { border-color: #1e293b; }
+        }
+        .anim-processing { animation: pulse-border 1.5s infinite; }
+    </style>
+</head>
+<body class="min-h-screen p-8">
+
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8 border-b border-slate-700 pb-4">
+        <div>
+            <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500">
+                <i class="fa-solid fa-network-wired mr-2"></i>AMD Neural-Grid
+            </h1>
+            <p class="text-slate-400 mt-1">Decentralized, Encrypted, Fault-Tolerant AI Engine</p>
+        </div>
+        <div class="flex space-x-4">
+            <div id="connection-status" class="px-3 py-1 rounded-full text-sm font-medium border border-red-500 text-red-500">
+                <i class="fa-solid fa-circle-xmark mr-1"></i> Disconnected
+            </div>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-12 gap-6">
+        
+        <!-- Left Column: Input and Topology -->
+        <div class="col-span-12 lg:col-span-8 flex flex-col space-y-6">
+            
+            <!-- Prompt Input (USP 1) -->
+            <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                <h2 class="text-xl font-semibold mb-4 text-slate-200">User Prompt</h2>
+                <div class="flex space-x-4">
+                    <input type="text" id="prompt-input" value="The greatest breakthrough in quantum computing is" 
+                        class="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                        placeholder="Enter a prompt...">
+                    <button id="generate-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors">
+                        Generate (20 Tokens)
+                    </button>
+                    <!-- Simulated Kill Button for USP 3 -->
+                    <button id="demo-kill-btn" class="bg-red-900/50 hover:bg-red-900 text-red-300 border border-red-700 px-4 py-2 rounded-lg font-medium transition-colors" title="Simulate process termination">
+                        <i class="fa-solid fa-skull"></i> Kill Node Mid-Gen
+                    </button>
+                </div>
+            </div>
+
+            <!-- Live Output Terminal -->
+            <div class="bg-slate-900 rounded-xl p-6 border border-slate-700 min-h-[200px] font-mono shadow-inner relative overflow-hidden">
+                <h2 class="text-sm text-slate-500 mb-2 uppercase tracking-wide">Live Generation Output</h2>
+                <div id="output-text" class="text-lg text-emerald-400 leading-relaxed whitespace-pre-wrap"></div>
+                
+                <!-- Tiny overlay showing current routing -->
+                <div id="routing-overlay" class="absolute bottom-4 right-4 text-xs text-slate-400 bg-slate-800 px-3 py-1 rounded-md opacity-0 transition-opacity">
+                    Routing Stage <span id="current-stage-badge" class="font-bold text-white">1</span> to <span id="current-node-badge" class="font-bold text-blue-400">Node-A</span>...
+                </div>
+            </div>
+
+            <!-- Node Swarm Topology (USP 1 & 3) -->
+            <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                <h2 class="text-xl font-semibold mb-6 text-slate-200 border-b border-slate-700 pb-2">Swarm Nodes (True Layer Split)</h2>
+                <div class="grid grid-cols-3 gap-6" id="nodes-grid">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Right Column: Metrics, Privacy, Ledger -->
+        <div class="col-span-12 lg:col-span-4 flex flex-col space-y-6">
+            
+            <!-- Privacy & Encryption Panel (USP 5) -->
+            <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+                <h2 class="text-lg font-semibold mb-4 text-slate-200 flex items-center">
+                    <i class="fa-solid fa-shield-halved text-purple-400 mr-2"></i> Zero-Trust Processing
+                </h2>
+                <div class="bg-slate-900 p-4 rounded-lg font-mono text-xs overflow-hidden">
+                    <div class="flex justify-between text-slate-500 mb-1">
+                        <span>AES-GCM Nonce:</span>
+                        <span class="text-green-400"><i class="fa-solid fa-check"></i> Verified</span>
+                    </div>
+                    <div id="crypto-nonce" class="text-purple-300 mb-3 truncate">Awaiting generation...</div>
+                    
+                    <div class="text-slate-500 mb-1">Encrypted Tensor Payload Preview:</div>
+                    <div id="crypto-payload" class="text-slate-400 break-all h-16 overflow-hidden">...</div>
+                </div>
+            </div>
+
+            <!-- Compute Metrics & Rewards (USP 2 & 4) -->
+            <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 flex-grow">
+                <h2 class="text-lg font-semibold mb-4 text-slate-200 flex items-center">
+                    <i class="fa-solid fa-coins text-yellow-400 mr-2"></i> Reputation & Rewards
+                </h2>
+                
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="text-slate-500 border-b border-slate-700">
+                            <tr>
+                                <th class="pb-2">Node</th>
+                                <th class="pb-2">Perf (s)</th>
+                                <th class="pb-2 text-right">Balance (REW)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-table" class="text-slate-300">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="mt-6 border-t border-slate-700 pt-4">
+                    <h3 class="text-xs text-slate-500 uppercase tracking-wide mb-2">Immutable Ledger (SHA256)</h3>
+                    <div class="bg-slate-900 p-3 rounded-md font-mono text-xs text-slate-400 break-all">
+                        <span class="text-blue-400 block mb-1">Latest Block Hash:</span>
+                        <span id="ledger-hash">0000000000000000000000000000000000000000</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Final Summary Overlay -->
+    <div id="summary-overlay" class="fixed inset-0 bg-slate-900/90 hidden z-50 flex items-center justify-center backdrop-blur-sm">
+        <div class="bg-slate-800 border border-slate-600 rounded-2xl p-8 max-w-lg w-full shadow-2xl transform scale-95 transition-transform duration-300">
+            <h2 class="text-3xl font-bold text-center text-white mb-2">Session Complete</h2>
+            <p class="text-center text-slate-400 mb-8">Decentralized AI inference finished successfully.</p>
+            
+            <div class="space-y-4 text-lg">
+                <div class="flex justify-between border-b border-slate-700 pb-2">
+                    <span class="text-emerald-400"><i class="fa-solid fa-check mx-2"></i> Tokens Generated</span>
+                    <span class="font-bold text-white content-tokens">20 / 20</span>
+                </div>
+                <div class="flex justify-between border-b border-slate-700 pb-2">
+                    <span class="text-blue-400"><i class="fa-solid fa-network-wired mx-2"></i> Compute Stages</span>
+                    <span class="font-bold text-white content-stages">60</span>
+                </div>
+                <div class="flex justify-between border-b border-slate-700 pb-2">
+                    <span class="text-red-400"><i class="fa-solid fa-shield-cat mx-2"></i> Failures Handled</span>
+                    <span class="font-bold text-white" id="summary-failures">0</span>
+                </div>
+                <div class="flex justify-between pb-2">
+                    <span class="text-purple-400"><i class="fa-solid fa-lock mx-2"></i> Encryption Verification</span>
+                    <span class="font-bold text-green-400">100% Secure</span>
+                </div>
+            </div>
+            
+            <div class="mt-8 text-center text-sm text-slate-500">
+                All compute was purposeful. Data remained encrypted.
+            </div>
+            
+            <button onclick="document.getElementById('summary-overlay').classList.add('hidden')" class="w-full mt-6 bg-slate-700 hover:bg-slate-600 text-white py-3 rounded-lg transition-colors">
+                Close
+            </button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
